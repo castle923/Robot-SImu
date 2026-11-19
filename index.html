@@ -1,0 +1,522 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Robot-SImu · 경량 로봇 시뮬레이터</title>
+<style>
+  :root {
+    --bg: #eef0f2; --panel: #ffffff; --line: #e1e4e8; --text: #16202a; --muted: #6b7682;
+    --accent: #0f766e; --accent-soft: #d8f0ec; --warn: #b45309; --danger: #dc2626;
+    --scene: #efece7; --floor: #f8f6f2; --grid: #d5d0c8; --box: #c9ced6; --wall: #9aa1ab;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12161b; --panel: #1b2129; --line: #2c343f; --text: #e6eaef; --muted: #94a0ad;
+      --accent: #2dd4bf; --accent-soft: #123a37; --warn: #fbbf24; --danger: #f87171;
+      --scene: #161b21; --floor: #232a33; --grid: #36404c; --box: #56616f; --wall: #6f7b8a;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 13px/1.5 "Pretendard", "Segoe UI", "Malgun Gothic", system-ui, sans-serif; }
+  .num { font-variant-numeric: tabular-nums; }
+  .muted { color: var(--muted); }
+  h1 { font-size: 22px; margin: 0 0 8px; letter-spacing: .04em; }
+  h2 { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 16px 0 6px; font-weight: 600; }
+  button, select { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 5px 11px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--panel); font-weight: 700; }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); margin: 0; }
+  :disabled { opacity: .45; cursor: default; }
+
+  /* 시작 화면 */
+  #start { min-height: 100%; display: grid; place-items: center; padding: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 24px; max-width: 620px; }
+  .choices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .choices button { text-align: left; padding: 14px; display: grid; gap: 4px; }
+  .choices b { font-size: 16px; }
+  .choices span { color: var(--muted); font-size: 12px; }
+  .choices button:hover { border-color: var(--accent); }
+
+  /* 시뮬레이터 화면 */
+  #app { height: 100%; display: grid; grid-template-columns: 1fr 350px; gap: 10px; padding: 10px; }
+  #app[hidden], #start[hidden] { display: none; }
+  #view { position: relative; min-height: 0; min-width: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--scene); }
+  #view canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+  .chip { position: absolute; left: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; pointer-events: none; }
+  #perf { top: 10px; }
+  #perf.bad { color: var(--danger); border-color: var(--danger); }
+  #hint { bottom: 10px; color: var(--muted); font-size: 12px; }
+  aside { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; overflow: auto; min-height: 0; }
+  aside h2:first-child { margin-top: 0; }
+  .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+  .row > select { flex: 1; min-width: 0; }
+  label.f { display: block; margin-bottom: 8px; }
+  label.f span { display: flex; justify-content: space-between; }
+  ol#stages { margin: 0; padding: 0; list-style: none; border: 1px solid var(--line); border-radius: 8px; }
+  ol#stages li { padding: 6px 8px; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: 44px 1fr auto; gap: 6px; }
+  ol#stages li:last-child { border-bottom: 0; }
+  ol#stages b { color: var(--accent); }
+  ol#stages time { color: var(--muted); font-size: 11px; white-space: nowrap; }
+  #graph { width: 100%; height: 110px; display: block; border: 1px solid var(--line); border-radius: 8px; }
+  ul.lab { margin: 0; padding-left: 18px; }
+  ul.lab li { margin-bottom: 4px; }
+  #check.bad { color: var(--danger); }
+  @media (max-width: 820px) {
+    html, body { height: auto; }
+    #app { grid-template-columns: 1fr; height: auto; padding: 16px; }
+    #view { height: 62vw; min-height: 260px; }
+    .choices { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div id="start">
+  <div class="card">
+    <h1>Robot-SImu</h1>
+    <p>브라우저만으로 도는 학습용 로봇 시뮬레이터입니다. 한 틱 안에서 <b>감지 → 판단 → 행동 → 적분</b>이 어떻게 이어지는지 멈추고, 한 칸씩 돌리고, 값을 바꿔 보며 확인합니다.</p>
+    <h2>실행 사양 선택</h2>
+    <div class="choices">
+      <button data-q="low"><b>최소 사양</b><span>내장 그래픽 노트북 · 목표 15 FPS</span><span>그림자·안티앨리어싱 끔 · 해상도 1배</span></button>
+      <button data-q="high"><b>최고 사양</b><span>외장 그래픽 · 목표 60 FPS</span><span>그림자·안티앨리어싱 켬 · LiDAR 광선 표시</span></button>
+    </div>
+    <p class="muted" id="startMsg">사양은 화면 품질만 바꿉니다. 시뮬레이션 계산은 두 사양에서 같습니다.</p>
+  </div>
+</div>
+
+<div id="app" hidden>
+  <section id="view" aria-label="3D 시뮬레이션 화면">
+    <div class="chip num" id="perf" role="status">측정 중…</div>
+    <div class="chip" id="hint">바닥 클릭: 목표 지정 · 드래그: 회전 · 휠: 확대 · W A S D: 수동 조종</div>
+  </section>
+
+  <aside>
+    <h2>시간</h2>
+    <div class="row">
+      <button id="btnPlay" class="primary">일시정지</button>
+      <button id="btnTick">한 틱 실행</button>
+      <button id="btnReset">초기화</button>
+    </div>
+    <div class="row">
+      <select id="dtSel" aria-label="시간 간격 DT">
+        <option value="240">DT 1/240초</option><option value="120">DT 1/120초</option><option value="60" selected>DT 1/60초</option>
+        <option value="30">DT 1/30초</option><option value="10">DT 1/10초</option><option value="5">DT 1/5초</option>
+      </select>
+      <select id="speedSel" aria-label="배속">
+        <option value="0.25">0.25배속</option><option value="1" selected>1배속</option><option value="4">4배속</option>
+      </select>
+    </div>
+
+    <h2>틱 내부 <span class="num" id="tickNo"></span></h2>
+    <ol id="stages">
+      <li><b>① 감지</b><span id="st0"></span><time id="tm0"></time></li>
+      <li><b>② 판단</b><span id="st1"></span><time id="tm1"></time></li>
+      <li><b>③ 행동</b><span id="st2"></span><time id="tm2"></time></li>
+      <li><b>④ 적분</b><span id="st3"></span><time id="tm3"></time></li>
+    </ol>
+
+    <h2>속도 그래프 (회색: 명령 · 색: 실제)</h2>
+    <canvas id="graph" width="640" height="220" aria-label="명령 속도와 실제 속도 그래프"></canvas>
+
+    <h2>물리</h2>
+    <div class="row">
+      <select id="dynSel" aria-label="물리 모드"><option value="0">운동학 (명령 = 속도)</option><option value="1">동역학 (힘 → 가속)</option></select>
+      <select id="integSel" aria-label="적분 방식"><option value="0">명시적 오일러</option><option value="1">암시적 오일러</option></select>
+    </div>
+    <label class="f"><span>질량 <b class="num" id="massT"></b></span><input type="range" id="mass" min="1" max="30" step="1" value="5"></label>
+    <label class="f"><span>마찰 계수 μ <b class="num" id="muT"></b></span><input type="range" id="mu" min="0.05" max="1" step="0.05" value="0.8"></label>
+
+    <h2>센서</h2>
+    <label class="f"><span>LiDAR 거리 노이즈 <b class="num" id="lidarT"></b></span><input type="range" id="lidarSd" min="0" max="0.2" step="0.01" value="0"></label>
+    <label class="f"><span>주행 기록 오차 <b class="num" id="odoT"></b></span><input type="range" id="odoK" min="0" max="0.15" step="0.01" value="0"></label>
+    <div class="row"><button id="btnFix">위치 보정</button><span class="muted num" id="stat"></span></div>
+
+    <h2>실험</h2>
+    <ul class="lab">
+      <li>일시정지 후 <b>한 틱 실행</b>을 눌러 네 단계의 값이 바뀌는 순서를 본다.</li>
+      <li>동역학 + 명시적 오일러 + 질량 1 kg + DT 1/10초: 속도 그래프가 진동한다. 암시적 오일러로 바꾸면 멈춘다.</li>
+      <li>동역학 + μ 0.05: 빙판처럼 가속·제동이 늦고 회전에서 옆으로 미끄러진다.</li>
+      <li>주행 기록 오차를 올리면 빨간 테두리(로봇이 믿는 위치)가 실제와 벌어진다. 노란 원 안에 들어오면 보정된다.</li>
+    </ul>
+
+    <h2>정보</h2>
+    <div class="row"><span class="num" id="check"></span></div>
+    <div class="row"><button id="btnQuality">사양 변경</button><span class="muted num" id="seedT"></span></div>
+  </aside>
+</div>
+
+<script src="vendor/three/three.min.js"></script>
+<script>
+'use strict';
+// ══════════ 1. 시뮬레이션 (화면과 무관한 계산. 단위: m, s, kg, rad) ══════════
+const W = 8, H = 6, CELL = 0.2, GW = W / CELL, GH = H / CELL, N = GW * GH;
+const R = 0.18, V_MAX = 1.0, W_MAX = 3.0, G = 9.81;
+const RAYS = 120, RANGE = 3.0, MARK_R = 0.8;
+const KP = 60, C_ROLL = 2, F_MOTOR = 20;   // 속도 제어 이득 N·s/m, 구름 저항 N·s/m, 모터 최대 힘 N
+const BOXES = [   // 장애물: 중심 (x, y), 크기 (w, h)
+  { x: 3.0, y: 1.1, w: 0.4, h: 2.2 }, { x: 5.2, y: 4.7, w: 0.4, h: 2.6 },
+  { x: 1.4, y: 3.8, w: 1.2, h: 0.4 }, { x: 6.8, y: 1.6, w: 1.0, h: 1.0 }, { x: 4.2, y: 4.2, w: 0.6, h: 0.6 },
+];
+const MARKS = [{ x: 2.4, y: 2.7 }, { x: 5.8, y: 2.6 }, { x: 6.6, y: 4.6 }];   // 위치를 아는 바닥 표식: 원 안에 들어오면 추정 위치가 보정된다
+const P = { dt: 1 / 60, speed: 1, dyn: false, implicit: false, mass: 5, mu: 0.8, lidarSd: 0, odoK: 0 };
+
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
+const distBox = (x, y, b) => Math.hypot(Math.max(Math.abs(x - b.x) - b.w / 2, 0), Math.max(Math.abs(y - b.y) - b.h / 2, 0));
+// 로봇(원)이 벽·장애물에 파고든 깊이. 0 이하이면 닿지 않음
+const pen = (x, y) => Math.max(R - x, R - y, x - (W - R), y - (H - R), ...BOXES.map(b => R - distBox(x, y, b)));
+
+// 난수는 시드 고정: 같은 시드와 같은 조작이면 결과가 같다 (?seed=숫자)
+const seed = +new URLSearchParams(location.search).get('seed') || 1;
+let rs = seed;
+const rnd = () => { rs = (rs + 0x6D2B79F5) | 0; let t = Math.imul(rs ^ (rs >>> 15), 1 | rs); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+const gauss = () => Math.sqrt(-2 * Math.log(1 - rnd())) * Math.cos(2 * Math.PI * rnd());
+
+// 경로 계획용 격자: 로봇 반지름 + 여유만큼 부풀린 장애물
+const grid = new Uint8Array(N);
+for (let i = 0; i < N; i++) grid[i] = pen((i % GW + .5) * CELL, ((i / GW | 0) + .5) * CELL) > -0.12 ? 1 : 0;
+const cellOf = (x, y) => clamp(y / CELL | 0, 0, GH - 1) * GW + clamp(x / CELL | 0, 0, GW - 1);
+function freeCell(c) {   // 막힌 칸이면 가장 가까운 빈 칸
+  if (!grid[c]) return c;
+  let best = c, bd = Infinity;
+  for (let i = 0; i < N; i++) if (!grid[i]) { const d = Math.hypot(i % GW - c % GW, (i / GW | 0) - (c / GW | 0)); if (d < bd) { bd = d; best = i; } }
+  return best;
+}
+const aCost = new Float32Array(N), aFrom = new Int32Array(N), aClosed = new Uint8Array(N);   // 매번 새로 만들지 않고 재사용
+function plan(sx, sy, gx, gy) {   // A* (8방향, 모서리 가로지르기 금지) → [[x, y], …] 또는 null
+  const s = freeCell(cellOf(sx, sy)), g = freeCell(cellOf(gx, gy));
+  const cost = aCost.fill(Infinity), from = aFrom.fill(-1), closed = aClosed.fill(0), open = [s], gx0 = g % GW, gy0 = g / GW | 0;
+  cost[s] = 0;
+  while (open.length) {
+    let bi = 0, bf = Infinity;   // 열린 칸 중 (지금까지 비용 + 목표까지 직선거리)가 가장 작은 칸
+    for (let i = 0; i < open.length; i++) { const o = open[i], f = cost[o] + Math.hypot(o % GW - gx0, (o / GW | 0) - gy0); if (f < bf) { bf = f; bi = i; } }
+    const c = open[bi]; open[bi] = open[open.length - 1]; open.pop();
+    if (c === g) break;
+    closed[c] = 1;
+    const cx = c % GW, cy = c / GW | 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const nx = cx + dx, ny = cy + dy, n = ny * GW + nx;
+      if ((!dx && !dy) || nx < 0 || ny < 0 || nx >= GW || ny >= GH || grid[n] || closed[n]) continue;
+      if (dx && dy && (grid[cy * GW + nx] || grid[ny * GW + cx])) continue;
+      const d = cost[c] + (dx && dy ? Math.SQRT2 : 1);
+      if (d < cost[n]) { if (cost[n] === Infinity) open.push(n); cost[n] = d; from[n] = c; }
+    }
+  }
+  if (g !== s && from[g] < 0) return null;
+  const p = [];
+  for (let c = g; c >= 0; c = from[c]) p.push([(c % GW + .5) * CELL, ((c / GW | 0) + .5) * CELL]);
+  p.reverse();
+  if (g === cellOf(gx, gy)) p[p.length - 1] = [gx, gy];
+  return p;
+}
+function carrot(p, x, y, look) {   // 경로 위에서 로봇보다 look 만큼 앞선 점
+  let bi = 0, bd = Infinity;
+  p.forEach((q, i) => { const d = Math.hypot(q[0] - x, q[1] - y); if (d < bd) { bd = d; bi = i; } });
+  while (bi < p.length - 1 && Math.hypot(p[bi][0] - x, p[bi][1] - y) < look) bi++;
+  return p[bi];
+}
+function rayBox(ox, oy, dx, dy, b) {   // 광선이 상자에 닿는 거리 (안 닿으면 Infinity)
+  let t0 = 0, t1 = Infinity;
+  for (const [o, d, c, hw] of [[ox, dx, b.x, b.w / 2], [oy, dy, b.y, b.h / 2]]) {
+    if (Math.abs(d) < 1e-9) { if (Math.abs(o - c) > hw) return Infinity; continue; }
+    let a = (c - hw - o) / d, z = (c + hw - o) / d;
+    if (a > z) [a, z] = [z, a];
+    if (a > t0) t0 = a;
+    if (z < t1) t1 = z;
+    if (t0 > t1) return Infinity;
+  }
+  return t0;
+}
+// dv/dt = (F0 − k·v) / m 을 dt 만큼 적분. 명시적: 지금 v로 기울기 계산. 암시적: 다음 v로 계산(식을 풀어 쓴 형태)
+const integ = (v, F0, k, m, dt, implicit) => implicit ? (v + dt * F0 / m) / (1 + dt * k / m) : v + dt * (F0 - k * v) / m;
+
+let S, keyV = 0, keyW = 0;
+function reset() {
+  rs = seed;
+  S = { t: 0, tick: 0, x: 1, y: 1, th: 0, v: 0, vp: 0, u: 0, w: 0, ex: 1, ey: 1, eth: 0,   // 실제 자세 / 속도 / 추정 자세
+    goal: { x: 7, y: 5 }, path: null, planT: 1, scanT: 1, vc: 0, wc: 0, F: 0, fmax: 0,
+    ranges: new Float32Array(RAYS).fill(RANGE), pts: new Float32Array(RAYS * 2).fill(NaN), sx: 1, sy: 1, front: RANGE,
+    hits: 0, inHit: false, arrived: false, manual: false, tr: {}, hist: [] };
+}
+function setGoal(x, y) { S.goal = { x, y }; S.planT = 1; S.arrived = false; }
+function fixPose() { S.ex = S.x; S.ey = S.y; S.eth = S.th; }
+
+function scan() {   // LiDAR: 360°를 RAYS 개로 나눠 가장 가까운 면까지의 거리를 잰다
+  let front = RANGE;
+  S.sx = S.x; S.sy = S.y;
+  for (let k = 0; k < RAYS; k++) {
+    const rel = k * 2 * Math.PI / RAYS, a = S.th + rel, dx = Math.cos(a), dy = Math.sin(a);
+    let d = Math.min(dx > 0 ? (W - S.x) / dx : dx < 0 ? -S.x / dx : Infinity, dy > 0 ? (H - S.y) / dy : dy < 0 ? -S.y / dy : Infinity);
+    for (const b of BOXES) d = Math.min(d, rayBox(S.x, S.y, dx, dy, b));
+    if (d < RANGE && P.lidarSd) d = Math.max(0, d + P.lidarSd * gauss());
+    const hit = d < RANGE;
+    S.ranges[k] = hit ? d : RANGE;
+    S.pts[2 * k] = hit ? S.x + dx * d : NaN; S.pts[2 * k + 1] = S.y + dy * d;
+    if (hit && (rel < 0.35 || rel > 2 * Math.PI - 0.35) && d < front) front = d;   // 전방 ±20°
+  }
+  S.front = Math.max(0, front - R);
+}
+
+const stageMs = [0, 0, 0, 0];   // 단계별 누적 시간 (화면 표시용)
+function step(dt) {
+  const tr = S.tr = { scan: false, plan: false, fix: false };
+  const t0 = performance.now();
+
+  // ① 감지: 센서가 세계를 읽는다. 로봇은 실제 위치를 모르고, 추정 위치(④에서 갱신)만 안다
+  if ((S.scanT += dt) >= 0.1) { S.scanT = 0; scan(); tr.scan = true; }   // LiDAR 10 Hz
+  if (Math.hypot(S.ex - S.x, S.ey - S.y) > 0.01 && MARKS.some(m => Math.hypot(m.x - S.x, m.y - S.y) < MARK_R)) { fixPose(); tr.fix = true; }
+  const t1 = performance.now();
+
+  // ② 판단: 추정 위치와 지도로 경로를 정하고, 속도 명령(vc, wc)을 만든다
+  let vc = 0, wc = 0;
+  S.manual = !!(keyV || keyW);
+  if (S.manual) { vc = keyV * V_MAX; wc = keyW * 2; }
+  else {
+    const gd = Math.hypot(S.goal.x - S.ex, S.goal.y - S.ey);
+    S.arrived = gd < 0.12;
+    if (!S.arrived) {
+      if ((S.planT += dt) >= 0.5) { S.planT = 0; S.path = plan(S.ex, S.ey, S.goal.x, S.goal.y); tr.plan = true; }   // 재계획 2 Hz
+      if (S.path) {
+        const c = carrot(S.path, S.ex, S.ey, 0.4), err = wrap(Math.atan2(c[1] - S.ey, c[0] - S.ex) - S.eth);
+        wc = clamp(3 * err, -W_MAX, W_MAX);
+        vc = V_MAX * Math.max(0, Math.cos(err)) ** 2 * Math.min(1, gd / 0.6 + 0.1);
+      }
+    }
+    if (vc > 0 && S.front < 0.6) vc *= Math.max(0, (S.front - 0.08) / 0.52);   // LiDAR 전방 거리로 감속·정지
+  }
+  S.vc = vc; S.wc = wc;
+  const t2 = performance.now();
+
+  // ③ 행동: 명령이 실제 속도가 되는 과정. 운동학은 즉시, 동역학은 힘 → 가속
+  const v0 = S.v;
+  if (!P.dyn) { S.v = vc; S.w = wc; S.u = 0; S.F = 0; S.fmax = 0; S.vp = S.v; }
+  else {
+    const m = P.mass, fmax = S.fmax = Math.min(F_MOTOR, P.mu * m * G);   // 바퀴가 바닥에 전할 수 있는 힘은 μ·m·g 까지
+    if (P.implicit) {
+      const v1 = integ(v0, KP * vc, KP + C_ROLL, m, dt, true);
+      if (Math.abs(KP * (vc - v1)) <= fmax) { S.F = KP * (vc - v1); S.v = v1; }
+      else { S.F = Math.sign(vc - v0) * fmax; S.v = integ(v0, S.F, C_ROLL, m, dt, true); }
+    } else { S.F = clamp(KP * (vc - v0), -fmax, fmax); S.v = integ(v0, S.F, C_ROLL, m, dt, false); }
+    // shortcut: 회전 속도는 명령을 그대로 따른다 (회전 관성 없음). 회전 동역학이 필요해지면 관성 모멘트를 추가
+    S.w = wc;
+    const need = S.v * S.w, grip = P.mu * G;   // 회전에 필요한 옆 가속도 vs 마찰이 줄 수 있는 가속도
+    if (Math.abs(need) > grip) S.u -= (need - Math.sign(need) * grip) * dt;
+    else S.u -= Math.sign(S.u) * Math.min(Math.abs(S.u), (grip - Math.abs(need)) * dt);
+    S.vp = P.implicit ? S.v : v0;   // 명시적 오일러는 이전 속도로 위치를 옮긴다
+  }
+  const t3 = performance.now();
+
+  // ④ 적분: 속도를 dt 만큼 더해 새 자세를 얻고, 충돌이면 막는다
+  const c = Math.cos(S.th), s = Math.sin(S.th);
+  const nx = S.x + (S.vp * c - S.u * s) * dt, ny = S.y + (S.vp * s + S.u * c) * dt, p1 = pen(nx, ny);
+  const hit = p1 > 0 && p1 >= pen(S.x, S.y);   // 닿았고 더 파고드는 방향일 때만 막는다 (빠져나오는 움직임은 허용)
+  if (hit) { if (!S.inHit) S.hits++; S.v = S.vp = S.u = 0; } else { S.x = nx; S.y = ny; }
+  S.inHit = hit;
+  S.th = wrap(S.th + S.w * dt);
+  // 주행 기록(바퀴 엔코더): 이번 틱에 바퀴가 돈 만큼 추정 자세를 옮긴다. 옆미끄럼은 바퀴가 모르므로 오차가 된다
+  S.ex += S.vp * Math.cos(S.eth) * dt * (1 + P.odoK); S.ey += S.vp * Math.sin(S.eth) * dt * (1 + P.odoK);
+  S.eth = wrap(S.eth + S.w * dt + P.odoK * S.vp * dt);   // 좌우 바퀴 크기 차이: 달릴수록 방향이 틀어진다
+  S.t += dt; S.tick++;
+  S.hist.push(vc, S.v); if (S.hist.length > 720) S.hist.splice(0, 2);
+  const t4 = performance.now();
+  stageMs[0] += t1 - t0; stageMs[1] += t2 - t1; stageMs[2] += t3 - t2; stageMs[3] += t4 - t3;
+  return t4 - t0;
+}
+
+function selfTest() {   // 해석해와 비교: 일정한 힘 F, 저항 c 이면 종단 속도는 F / c
+  const ok = [false, true].map(imp => { let v = 0; for (let i = 0; i < 5000; i++) v = integ(v, 3, C_ROLL, 5, 1 / 60, imp); return Math.abs(v - 3 / C_ROLL) < 0.01 * 3 / C_ROLL; });
+  ok.push(!!plan(1, 1, 7, 5));
+  console.assert(ok.every(Boolean), 'self-test failed', ok);
+  return ok.every(Boolean);
+}
+
+// ══════════ 2. 화면 (Three.js. 시뮬레이션 상태 S를 읽기만 한다) ══════════
+const $ = id => document.getElementById(id);
+const QUALITY = {
+  low: { name: '최소 사양', fps: 15, aa: false, pr: 1, shadow: false, rays: false },
+  high: { name: '최고 사양', fps: 60, aa: true, pr: Math.min(devicePixelRatio, 2), shadow: true, rays: true },
+};
+const STEP_LIMIT_MS = 4;
+let Q, renderer, scene, camera, robot, ghost, goalRing, pathLine, pts, rays, shownPath;
+const cam = { az: 0, el: 0.95, d: 10.5 };
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+function initView() {
+  const view = $('view'), col = n => new THREE.Color(css(n));
+  renderer = new THREE.WebGLRenderer({ antialias: Q.aa });
+  renderer.setPixelRatio(Q.pr);
+  view.prepend(renderer.domElement);
+  scene = new THREE.Scene(); scene.background = col('--scene');
+  camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xb8b2a8, 1.7));
+  const sun = new THREE.DirectionalLight(0xffffff, 2);
+  sun.position.set(W / 2 + 3, 9, H / 2 - 4); sun.target.position.set(W / 2, 0, H / 2); scene.add(sun, sun.target);
+  if (Q.shadow) {
+    renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); Object.assign(sun.shadow.camera, { left: -6, right: 6, top: 6, bottom: -6 });
+  }
+  const mesh = (geo, color, x, y, z, parent = scene) => {
+    const m = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color })); m.position.set(x, y, z); m.castShadow = m.receiveShadow = Q.shadow; parent.add(m); return m;
+  };
+  const flat = (geo, color, opacity = 1) => { const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: opacity < 1, opacity, side: THREE.DoubleSide })); m.rotation.x = -Math.PI / 2; scene.add(m); return m; };
+  const lineSeg = (arr, color, opacity = 1) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(arr), 3)); const l = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color, transparent: opacity < 1, opacity })); l.frustumCulled = false; scene.add(l); return l; };
+
+  const floor = mesh(new THREE.PlaneGeometry(W, H), col('--floor'), W / 2, 0, H / 2); floor.rotation.x = -Math.PI / 2; floor.castShadow = false;
+  const g = [];   // 1 m 눈금
+  for (let x = 0; x <= W; x++) g.push(x, 0.003, 0, x, 0.003, H);
+  for (let y = 0; y <= H; y++) g.push(0, 0.003, y, W, 0.003, y);
+  lineSeg(g, col('--grid'));
+  for (const [w, d, x, z] of [[W + 0.2, 0.1, W / 2, -0.05], [W + 0.2, 0.1, W / 2, H + 0.05], [0.1, H, -0.05, H / 2], [0.1, H, W + 0.05, H / 2]]) mesh(new THREE.BoxGeometry(w, 0.3, d), col('--wall'), x, 0.15, z);
+  for (const b of BOXES) mesh(new THREE.BoxGeometry(b.w, 0.5, b.h), col('--box'), b.x, 0.25, b.y);
+  for (const m of MARKS) { flat(new THREE.CircleGeometry(0.12, 24), 0xf2b705).position.set(m.x, 0.005, m.y); flat(new THREE.RingGeometry(MARK_R - 0.03, MARK_R, 48), 0xf2b705, 0.45).position.set(m.x, 0.005, m.y); }
+
+  robot = new THREE.Group(); scene.add(robot);   // 앞 = +x
+  mesh(new THREE.CylinderGeometry(R, R, 0.14, 24), 0xe5352b, 0, 0.11, 0, robot);
+  mesh(new THREE.BoxGeometry(0.12, 0.05, 0.1), 0x16202a, R - 0.06, 0.205, 0, robot);
+  for (const z of [-R, R]) mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.04, 12), 0x16202a, 0, 0.06, z, robot).rotation.x = Math.PI / 2;
+  ghost = new THREE.Group(); scene.add(ghost);   // 로봇이 믿는 자신의 위치
+  const wire = new THREE.MeshBasicMaterial({ color: css('--danger'), wireframe: true });
+  ghost.add(new THREE.Mesh(new THREE.CylinderGeometry(R, R, 0.14, 12, 1, true), wire)); ghost.children[0].position.y = 0.11;
+  ghost.add(new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.05, 0.1), wire)); ghost.children[1].position.set(R - 0.06, 0.205, 0);
+  goalRing = flat(new THREE.RingGeometry(0.1, 0.17, 32), css('--accent'));
+  pathLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: css('--accent') })); pathLine.frustumCulled = false; scene.add(pathLine);
+  const pg = new THREE.BufferGeometry(); pg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(RAYS * 3), 3));
+  pts = new THREE.Points(pg, new THREE.PointsMaterial({ color: 0xe5484d, size: 4 * Q.pr, sizeAttenuation: false })); pts.frustumCulled = false; scene.add(pts);
+  if (Q.rays) rays = lineSeg(new Array(RAYS * 6).fill(0), 0xe5484d, 0.14);
+
+  // 카메라: 드래그 회전, 휠 확대, 짧은 클릭은 목표 지정
+  const cv = renderer.domElement, ray = new THREE.Raycaster(), ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hitV = new THREE.Vector3();
+  let drag = null, moved = 0;
+  cv.onpointerdown = e => { drag = [e.clientX, e.clientY]; moved = 0; cv.setPointerCapture(e.pointerId); };
+  cv.onpointermove = e => {
+    if (!drag) return;
+    const dx = e.clientX - drag[0], dy = e.clientY - drag[1]; drag = [e.clientX, e.clientY]; moved += Math.abs(dx) + Math.abs(dy);
+    cam.az -= dx * 0.006; cam.el = clamp(cam.el + dy * 0.006, 0.15, 1.55);
+  };
+  cv.onpointerup = e => {
+    if (drag && moved < 5) {
+      const r = cv.getBoundingClientRect();
+      ray.setFromCamera(new THREE.Vector2((e.clientX - r.left) / r.width * 2 - 1, -(e.clientY - r.top) / r.height * 2 + 1), camera);
+      if (ray.ray.intersectPlane(ground, hitV) && hitV.x > 0 && hitV.x < W && hitV.z > 0 && hitV.z < H) setGoal(hitV.x, hitV.z);
+    }
+    drag = null;
+  };
+  cv.onwheel = e => { e.preventDefault(); cam.d = clamp(cam.d * (e.deltaY > 0 ? 1.1 : 0.9), 3, 25); };
+  new ResizeObserver(() => { const w = view.clientWidth, h = view.clientHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }).observe(view);
+}
+
+function draw() {
+  camera.position.set(W / 2 + cam.d * Math.cos(cam.el) * Math.sin(cam.az), cam.d * Math.sin(cam.el), H / 2 + cam.d * Math.cos(cam.el) * Math.cos(cam.az));
+  camera.lookAt(W / 2, 0, H / 2);
+  robot.position.set(S.x, 0, S.y); robot.rotation.y = -S.th;
+  ghost.visible = Math.hypot(S.ex - S.x, S.ey - S.y) > 0.02;
+  ghost.position.set(S.ex, 0, S.ey); ghost.rotation.y = -S.eth;
+  goalRing.position.set(S.goal.x, 0.008, S.goal.y);
+  if (S.path !== shownPath) { shownPath = S.path; pathLine.geometry.setFromPoints((S.path || []).map(p => new THREE.Vector3(p[0], 0.012, p[1]))); }
+  const a = pts.geometry.attributes.position.array, b = rays && rays.geometry.attributes.position.array;
+  for (let k = 0; k < RAYS; k++) {
+    const x = S.pts[2 * k], on = x === x;   // NaN = 닿은 면 없음
+    a[3 * k] = on ? x : S.sx; a[3 * k + 1] = on ? 0.17 : 1e4; a[3 * k + 2] = on ? S.pts[2 * k + 1] : S.sy;   // 1e4: 카메라 시야 밖으로 보내 숨김
+    if (b) { b[6 * k] = S.sx; b[6 * k + 1] = a[3 * k + 1]; b[6 * k + 2] = S.sy; b[6 * k + 3] = a[3 * k]; b[6 * k + 4] = a[3 * k + 1]; b[6 * k + 5] = a[3 * k + 2]; }
+  }
+  pts.geometry.attributes.position.needsUpdate = true;
+  if (b) rays.geometry.attributes.position.needsUpdate = true;
+  renderer.render(scene, camera);
+}
+
+const gctx = $('graph').getContext('2d');
+function drawGraph() {   // 최근 360틱의 명령 속도와 실제 속도
+  const w = 640, h = 220, yOf = v => h - 20 - (v + 0.4) / 1.8 * (h - 30), n = S.hist.length / 2;
+  gctx.clearRect(0, 0, w, h);
+  gctx.strokeStyle = css('--line'); gctx.lineWidth = 1; gctx.beginPath(); gctx.moveTo(0, yOf(0)); gctx.lineTo(w, yOf(0)); gctx.moveTo(0, yOf(1)); gctx.lineTo(w, yOf(1)); gctx.stroke();
+  gctx.fillStyle = css('--muted'); gctx.font = '20px system-ui'; gctx.fillText('1 m/s', 6, yOf(1) - 6); gctx.fillText('0', 6, yOf(0) - 6);
+  for (const [off, color, lw] of [[0, css('--muted'), 2], [1, css('--accent'), 3]]) {
+    gctx.strokeStyle = color; gctx.lineWidth = lw; gctx.beginPath();
+    for (let i = 0; i < n; i++) { const x = (360 - n + i) / 359 * w, y = yOf(clamp(S.hist[2 * i + off], -0.4, 1.4)); i ? gctx.lineTo(x, y) : gctx.moveTo(x, y); }
+    gctx.stroke();
+  }
+}
+
+const perf = { frames: 0, t: 0, n: 0, sum: 0, max: 0, fps: 0, avg: 0, peak: 0 };   // 최근 0.5초 창의 측정값
+function hud() {
+  const f = (v, d = 2) => v.toFixed(d), tr = S.tr, err = Math.hypot(S.ex - S.x, S.ey - S.y);
+  $('tickNo').textContent = `#${S.tick} · t ${f(S.t)}초 · dt ${f(P.dt * 1000, 1)} ms`;
+  $('st0').textContent = `LiDAR ${tr.scan ? '갱신' : '유지'} · 전방 ${f(S.front)} m · 추정 오차 ${f(err * 100, 0)} cm${tr.fix ? ' → 랜드마크로 보정' : ''}`;
+  $('st1').textContent = `${S.manual ? '수동 조종' : S.arrived ? '도착' : S.path ? `경로 ${S.path.length}점${tr.plan ? ' (재계획)' : ''}` : '경로 없음'} → 명령 v ${f(S.vc)} m/s · ω ${f(S.wc)} rad/s`;
+  $('st2').textContent = P.dyn ? `구동력 ${f(S.F, 1)} N (한계 ${f(S.fmax, 1)} N) → 가속 ${f((S.F - C_ROLL * S.v) / P.mass)} m/s²` : '운동학: 명령 속도를 그대로 적용';
+  $('st3').textContent = `v ${f(S.v)} m/s · 옆미끄럼 ${f(S.u)} m/s · 위치 (${f(S.x)}, ${f(S.y)})${S.inHit ? ' · 충돌' : ''}`;
+  $('stat').textContent = `충돌 ${S.hits}회 · 추정 오차 ${f(err * 100, 0)} cm`;
+  drawGraph();
+}
+function perfHud() {
+  const sm = perf.n || 1, bad = perf.fps < Q.fps * 0.95 || perf.peak > STEP_LIMIT_MS;
+  $('perf').textContent = `${Q.name} · ${perf.fps.toFixed(0)} FPS (목표 ${Q.fps}) · step 평균 ${perf.avg.toFixed(3)} ms · 최대 ${perf.peak.toFixed(2)} ms (한계 ${STEP_LIMIT_MS})`;
+  $('perf').className = 'chip num' + (bad ? ' bad' : '');
+  stageMs.forEach((ms, i) => { $('tm' + i).textContent = perf.n ? `${(ms / sm * 1000).toFixed(0)} µs` : ''; stageMs[i] = 0; });
+}
+
+let paused = false, last = 0, acc = 0, hudT = 0;
+function tick() { const ms = step(P.dt); perf.n++; perf.sum += ms; if (ms > perf.max) perf.max = ms; }
+function frame(now) {
+  requestAnimationFrame(frame);
+  const real = Math.min(0.1, (now - last) / 1000); last = now;
+  if (!paused) {
+    acc += real * P.speed;
+    let n = 0; while (acc >= P.dt && n++ < 500) { tick(); acc -= P.dt; }   // 고정 스텝: 화면 속도와 무관하게 항상 같은 dt
+    if (n > 500) acc = 0;
+  }
+  draw();
+  perf.frames++;
+  if ((hudT += real) >= 0.1) { hudT = 0; hud(); }
+  if (now - perf.t >= 500) {
+    perf.fps = perf.frames * 1000 / (now - perf.t); perf.avg = perf.n ? perf.sum / perf.n : 0; perf.peak = perf.max;
+    perfHud(); perf.frames = perf.n = perf.sum = perf.max = 0; perf.t = now;
+  }
+}
+
+function setPaused(v) { paused = v; $('btnPlay').textContent = v ? '재생' : '일시정지'; }
+function bindUi() {
+  $('btnPlay').onclick = () => setPaused(!paused);
+  $('btnTick').onclick = () => { setPaused(true); tick(); hud(); };
+  $('btnReset').onclick = () => { reset(); acc = 0; hud(); };
+  $('btnQuality').onclick = () => location.assign(location.pathname);
+  $('btnFix').onclick = fixPose;
+  $('dtSel').onchange = e => P.dt = 1 / +e.target.value;
+  $('speedSel').onchange = e => P.speed = +e.target.value;
+  const phys = () => { P.dyn = $('dynSel').value === '1'; P.implicit = $('integSel').value === '1'; for (const id of ['integSel', 'mass', 'mu']) $(id).disabled = !P.dyn; };
+  $('dynSel').onchange = $('integSel').onchange = phys; phys();
+  const slider = (id, key, out, text) => { const f = () => { P[key] = +$(id).value; $(out).textContent = text(P[key]); }; $(id).oninput = f; f(); };
+  slider('mass', 'mass', 'massT', v => `${v} kg`);
+  slider('mu', 'mu', 'muT', v => v.toFixed(2));
+  slider('lidarSd', 'lidarSd', 'lidarT', v => `±${(v * 100).toFixed(0)} cm`);
+  slider('odoK', 'odoK', 'odoT', v => `${v.toFixed(2)} rad/m`);
+  const keys = new Set(), upd = () => {
+    keyV = (keys.has('w') || keys.has('arrowup') ? 1 : 0) - (keys.has('s') || keys.has('arrowdown') ? 1 : 0);
+    keyW = (keys.has('d') || keys.has('arrowright') ? 1 : 0) - (keys.has('a') || keys.has('arrowleft') ? 1 : 0);
+  };
+  addEventListener('keydown', e => { if (/INPUT|SELECT/.test(e.target.tagName)) return; keys.add(e.key.toLowerCase()); upd(); if (e.key.startsWith('Arrow')) e.preventDefault(); });
+  addEventListener('keyup', e => { keys.delete(e.key.toLowerCase()); upd(); });
+  addEventListener('blur', () => { keys.clear(); upd(); });
+}
+
+function start(q) {
+  Q = QUALITY[q];
+  try { initView(); } catch (e) { $('startMsg').textContent = `3D 화면을 만들 수 없습니다 (WebGL 필요): ${e.message}`; return; }
+  $('start').hidden = true; $('app').hidden = false;
+  bindUi();
+  const ok = selfTest();
+  $('check').textContent = ok ? '자체 점검 통과: 적분기 종단 속도 · A* 경로' : '자체 점검 실패 (콘솔 확인)'; $('check').className = 'num' + (ok ? '' : ' bad');
+  $('seedT').textContent = `시드 ${seed}`;
+  hud(); last = perf.t = performance.now(); requestAnimationFrame(frame);
+}
+
+reset();
+window.sim = { get S() { return S; }, P, step, reset, perf, setGoal, run(n) { let max = 0, sum = 0; for (let i = 0; i < n; i++) { const ms = step(P.dt); sum += ms; if (ms > max) max = ms; } return { avg: sum / n, max }; } };   // 콘솔·시험용
+$('start').onclick = e => { const b = e.target.closest('button[data-q]'); if (b) start(b.dataset.q); };
+const q0 = new URLSearchParams(location.search).get('q');   // ?q=low|high 로 시작 화면 건너뛰기 (측정용)
+if (QUALITY[q0]) start(q0);
+</script>
+</body>
+</html>
